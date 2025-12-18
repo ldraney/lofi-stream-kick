@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>arcade lofi</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="scanlines"></div>
+
+  <div class="arcade-room">
+    <div class="cabinet">
+      <div class="cabinet-top"></div>
+      <div class="screen">
+        <div class="screen-content">
+          <div class="visualizer">
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+          </div>
+          <div class="screen-text">LOFI MODE</div>
+        </div>
+        <div class="screen-glow"></div>
+      </div>
+      <div class="controls">
+        <div class="joystick">
+          <div class="stick"></div>
+        </div>
+        <div class="buttons">
+          <div class="btn btn-a"></div>
+          <div class="btn btn-b"></div>
+        </div>
+      </div>
+      <div class="coin-slot">
+        <div class="slot"></div>
+        <div class="coin-text">INSERT COIN</div>
+      </div>
+    </div>
+
+    <div class="neon-sign">
+      <span class="neon-text">ARCADE</span>
+    </div>
+
+    <div class="floor"></div>
+  </div>
+
+  <div class="info">
+    <div class="title">chiptune lofi beats</div>
+    <div class="equalizer">
+      <span></span><span></span><span></span><span></span><span></span>
+    </div>
+  </div>
+
+  <script>
+    // Web Audio API - Chiptune Lofi
+    let audioStarted = false;
+
+    function startAudio() {
+      if (audioStarted) return;
+      audioStarted = true;
+
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const masterGain = ctx.createGain();
+      masterGain.gain.value = 0.25;
+      masterGain.connect(ctx.destination);
+
+      // Arcade hum ambient (low frequency)
+      const humOsc = ctx.createOscillator();
+      humOsc.type = 'sine';
+      humOsc.frequency.value = 60;
+      const humGain = ctx.createGain();
+      humGain.gain.value = 0.05;
+      const humFilter = ctx.createBiquadFilter();
+      humFilter.type = 'lowpass';
+      humFilter.frequency.value = 100;
+      humOsc.connect(humFilter);
+      humFilter.connect(humGain);
+      humGain.connect(masterGain);
+      humOsc.start();
+
+      // Chiptune chord progression: C - F - G - Am
+      const chords = [
+        [261.63, 329.63, 392.00], // C maj
+        [349.23, 440.00, 523.25], // F maj
+        [392.00, 493.88, 587.33], // G maj
+        [220.00, 261.63, 329.63], // A min
+      ];
+
+      // Square wave pad (8-bit style)
+      function playChipPad(freqs, startTime, duration) {
+        freqs.forEach((freq, idx) => {
+          const osc = ctx.createOscillator();
+          // Alternate between square and triangle for texture
+          osc.type = idx % 2 === 0 ? 'square' : 'triangle';
+          osc.frequency.value = freq * 0.5; // One octave down
+
+          const oscGain = ctx.createGain();
+          const filter = ctx.createBiquadFilter();
+          filter.type = 'lowpass';
+          filter.frequency.value = 1200;
+
+          osc.connect(filter);
+          filter.connect(oscGain);
+          oscGain.connect(masterGain);
+
+          // Soft attack, sustained, soft release
+          oscGain.gain.setValueAtTime(0, startTime);
+          oscGain.gain.linearRampToValueAtTime(0.06, startTime + 0.3);
+          oscGain.gain.setValueAtTime(0.06, startTime + duration - 0.5);
+          oscGain.gain.linearRampToValueAtTime(0, startTime + duration);
+
+          osc.start(startTime);
+          osc.stop(startTime + duration);
+        });
+      }
+
+      // Arpeggio pattern (fast 16th notes)
+      function playArpeggio(freqs, startTime, duration) {
+        const noteLength = 0.15;
+        const pattern = [0, 1, 2, 1, 0, 2, 1, 2]; // Arp pattern indices
+        let time = startTime;
+
+        for (let i = 0; time < startTime + duration - noteLength; i++) {
+          const noteIdx = pattern[i % pattern.length];
+          const freq = freqs[noteIdx % freqs.length];
+
+          const osc = ctx.createOscillator();
+          osc.type = 'square';
+          osc.frequency.value = freq;
+
+          const oscGain = ctx.createGain();
+          const filter = ctx.createBiquadFilter();
+          filter.type = 'lowpass';
+          filter.frequency.value = 2000;
+
+          osc.connect(filter);
+          filter.connect(oscGain);
+          oscGain.connect(masterGain);
+
+          oscGain.gain.setValueAtTime(0.04, time);
+          oscGain.gain.exponentialRampToValueAtTime(0.001, time + noteLength * 0.8);
+
+          osc.start(time);
+          osc.stop(time + noteLength);
+
+          time += noteLength;
+        }
+      }
+
+      // Schedule chord progression
+      function scheduleChords() {
+        const now = ctx.currentTime;
+        const chordDuration = 4;
+        chords.forEach((chord, i) => {
+          playChipPad(chord, now + i * chordDuration, chordDuration);
+          playArpeggio(chord, now + i * chordDuration, chordDuration);
+        });
+        setTimeout(scheduleChords, chords.length * chordDuration * 1000);
+      }
+      scheduleChords();
+
+      // Square wave sub bass
+      const bassNotes = [65.41, 87.31, 98.00, 55.00]; // C2, F2, G2, A1
+      let bassIndex = 0;
+
+      function playBass() {
+        const osc = ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.value = bassNotes[bassIndex];
+
+        const oscGain = ctx.createGain();
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 200;
+
+        osc.connect(filter);
+        filter.connect(oscGain);
+        oscGain.connect(masterGain);
+
+        const now = ctx.currentTime;
+        oscGain.gain.setValueAtTime(0, now);
+        oscGain.gain.linearRampToValueAtTime(0.12, now + 0.1);
+        oscGain.gain.setValueAtTime(0.12, now + 3.5);
+        oscGain.gain.linearRampToValueAtTime(0, now + 4);
+
+        osc.start(now);
+        osc.stop(now + 4);
+
+        bassIndex = (bassIndex + 1) % bassNotes.length;
+        setTimeout(playBass, 4000);
+      }
+      playBass();
+
+      // Occasional retro bleep sounds
+      function playBleep() {
+        if (Math.random() > 0.3) {
+          setTimeout(playBleep, 3000 + Math.random() * 5000);
+          return;
+        }
+
+        const osc = ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.value = 800 + Math.random() * 400;
+
+        const oscGain = ctx.createGain();
+        osc.connect(oscGain);
+        oscGain.connect(masterGain);
+
+        const now = ctx.currentTime;
+        oscGain.gain.setValueAtTime(0.03, now);
+        oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+
+        osc.start(now);
+        osc.stop(now + 0.1);
+
+        setTimeout(playBleep, 3000 + Math.random() * 5000);
+      }
+      setTimeout(playBleep, 2000);
+
+      // Vinyl crackle for lofi authenticity
+      const crackleBuffer = ctx.createBuffer(1, ctx.sampleRate * 4, ctx.sampleRate);
+      const crackleData = crackleBuffer.getChannelData(0);
+      for (let i = 0; i < crackleBuffer.length; i++) {
+        crackleData[i] = Math.random() > 0.99 ? (Math.random() * 0.4 - 0.2) : 0;
+      }
+      const crackle = ctx.createBufferSource();
+      crackle.buffer = crackleBuffer;
+      crackle.loop = true;
+      const crackleGain = ctx.createGain();
+      crackleGain.gain.value = 0.2;
+      crackle.connect(crackleGain);
+      crackleGain.connect(masterGain);
+      crackle.start();
+
+      console.log('Chiptune lofi audio started');
+    }
+
+    // Auto-start for streaming
+    document.addEventListener('click', startAudio, { once: true });
+    document.addEventListener('keydown', startAudio, { once: true });
+
+    setTimeout(() => {
+      startAudio();
+    }, 1000);
+  </script>
+</body>
+</html>
