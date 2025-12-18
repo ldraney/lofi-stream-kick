@@ -2,6 +2,16 @@
 
 24/7 lofi stream to Kick with an arcade/retro gaming theme.
 
+## Secrets
+
+```bash
+# Stream key and RTMP URL (pending - not yet deployed)
+cat ~/api-secrets/lofi-stream/platforms/kick.env
+
+# SSH key for servers
+~/api-secrets/hetzner-server/id_ed25519
+```
+
 ## Quick Reference
 
 ```bash
