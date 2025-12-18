@@ -5,7 +5,7 @@
 ## Secrets
 
 ```bash
-# Stream key and RTMP URL (pending - not yet deployed)
+# Stream key and RTMP URL
 cat ~/api-secrets/lofi-stream/platforms/kick.env
 
 # SSH key for servers
