@@ -5,9 +5,9 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/lofi-stream-kick
+WorkingDirectory=/opt/lofi-stream-kick/server
 Environment=KICK_KEY=YOUR_STREAM_KEY_HERE
-ExecStart=/opt/lofi-stream-kick/stream.sh
+ExecStart=/opt/lofi-stream-kick/server/stream.sh
 Restart=always
 RestartSec=10
 StandardOutput=journal
