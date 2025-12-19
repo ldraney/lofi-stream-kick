@@ -1,132 +1,127 @@
 #!/bin/bash
-# Lofi Stream to Kick
-# Captures a headless browser playing our arcade lofi page and streams to Kick
-
+# Lofi Stream to Kick - Simplified for isolated server
 set -e
 
-# Configuration
 DISPLAY_NUM=97
-SINK_NAME="kick_speaker"
+SINK_NAME="virtual_speaker"
 RESOLUTION="1280x720"
 FPS=30
 KICK_URL="rtmps://fa723fc1b171.global-contribute.live-video.net/app"
 PAGE_URL="https://ldraney.github.io/lofi-stream-kick/"
 
-# Stream key from environment
 if [ -z "$KICK_KEY" ]; then
     echo "Error: KICK_KEY environment variable not set"
     exit 1
 fi
 
 echo "Starting Lofi Stream to Kick..."
-echo "Resolution: $RESOLUTION @ ${FPS}fps"
 
-# Cleanup any existing processes
 cleanup() {
     echo "Cleaning up..."
     pkill -f "Xvfb :$DISPLAY_NUM" 2>/dev/null || true
-    pkill -f "chromium.*lofi-stream-kick" 2>/dev/null || true
-    pkill -f "ffmpeg.*kick" 2>/dev/null || true
+    pkill -f "openbox" 2>/dev/null || true
+    pkill -f "chromium" 2>/dev/null || true
+    pkill -f "ffmpeg" 2>/dev/null || true
+    pulseaudio --kill 2>/dev/null || true
 }
-
 trap cleanup EXIT
 cleanup
 sleep 2
 
 # Start virtual display
-echo "Starting virtual display :$DISPLAY_NUM..."
+echo "Starting virtual display..."
 Xvfb :$DISPLAY_NUM -screen 0 ${RESOLUTION}x24 &
-XVFB_PID=$!
 sleep 2
 export DISPLAY=:$DISPLAY_NUM
 
-# PulseAudio setup (shared with other streams - don't start/stop)
-echo "Setting up PulseAudio sink..."
-export XDG_RUNTIME_DIR=/run/user/$(id -u)
+# Start window manager (required for proper window rendering)
+echo "Starting window manager..."
+openbox &
+sleep 2
+
+# PulseAudio setup - use config file approach
+echo "Setting up PulseAudio..."
+export HOME=/root
+export XDG_RUNTIME_DIR=/run/user/0
 mkdir -p $XDG_RUNTIME_DIR
+mkdir -p /root/.config/pulse
 
-# Ensure PulseAudio is running
-pulseaudio --check || pulseaudio --start --exit-idle-time=-1
+# Create pulse config that loads null sink automatically
+cat > /root/.config/pulse/default.pa << PULSECONF
+.include /etc/pulse/default.pa
+load-module module-null-sink sink_name=$SINK_NAME sink_properties=device.description=VirtualSpeaker
+set-default-sink $SINK_NAME
+PULSECONF
 
-# Fix 1: Clear stream-restore database to prevent PulseAudio from "remembering" wrong routing
-rm -f ~/.config/pulse/*-stream-volumes.tdb 2>/dev/null || true
+# Kill any existing and start fresh
+pulseaudio --kill 2>/dev/null || true
+sleep 2
+pulseaudio --start --exit-idle-time=-1 2>&1 || true
+sleep 3
 
-# Create our own virtual audio sink if it doesn't exist
-if ! pactl list sinks short 2>/dev/null | grep -q "	$SINK_NAME	"; then
-    pactl load-module module-null-sink sink_name=$SINK_NAME sink_properties=device.description=KickSpeaker 2>/dev/null || true
+# Verify sink exists with retries
+echo "Verifying audio sink..."
+for i in 1 2 3 4 5; do
+    if pactl list sinks short 2>/dev/null | grep -q "$SINK_NAME"; then
+        echo "Audio sink verified: $SINK_NAME (attempt $i)"
+        break
+    fi
+    echo "Waiting for sink... ($i/5)"
+    sleep 2
+done
+
+# Final check
+if ! pactl list sinks short 2>/dev/null | grep -q "$SINK_NAME"; then
+    echo "ERROR: Audio sink $SINK_NAME not found"
+    pactl list sinks short 2>/dev/null || echo "Cannot list sinks"
+    exit 1
 fi
 
-# Export PULSE_SERVER for ffmpeg
-export PULSE_SERVER=unix:$XDG_RUNTIME_DIR/pulse/native
+# Export PulseAudio server path for all subsequent commands
+export PULSE_SERVER=unix:/run/user/0/pulse/native
 
-# Start Chromium with separate user data dir
-# Fix 2: PULSE_SINK forces audio to correct sink from the start
+# Verify we can access the monitor
+echo "Testing audio source..."
+if pactl list sources short 2>/dev/null | grep -q "${SINK_NAME}.monitor"; then
+    echo "Audio monitor source verified: ${SINK_NAME}.monitor"
+else
+    echo "ERROR: Audio monitor source not found"
+    pactl list sources short 2>/dev/null || echo "Cannot list sources"
+    exit 1
+fi
+
+# Clear chromium data to avoid restore dialog
+rm -rf /tmp/chromium-kick
+
+# Start Chromium with fullscreen
 echo "Starting Chromium..."
 PULSE_SINK=$SINK_NAME chromium-browser \
     --no-sandbox \
     --disable-gpu \
     --disable-software-rasterizer \
     --disable-dev-shm-usage \
+    --disable-infobars \
+    --disable-session-crashed-bubble \
+    --disable-restore-session-state \
+    --disable-features=TranslateUI,InfiniteSessionRestore \
+    --hide-crash-restore-bubble \
+    --noerrdialogs \
     --user-data-dir=/tmp/chromium-kick \
-    --kiosk \
+    --start-fullscreen \
     --autoplay-policy=no-user-gesture-required \
     --window-size=1280,720 \
     --window-position=0,0 \
     "$PAGE_URL" &
 CHROME_PID=$!
 
-# Wait for page to load
 echo "Waiting for page to load..."
 sleep 8
 
-# Trigger audio with xdotool
-echo "Triggering audio..."
-xdotool mousemove 640 360 click 1
-sleep 1
-xdotool key space
-sleep 1
-xdotool mousemove 640 360 click 1
-sleep 2
-
-# Fix 3: Aggressive audio routing - immediate check with retries, then background monitor
-route_audio() {
-    local retries=5
-    local i=0
-    while [ $i -lt $retries ]; do
-        SINK_INPUT=$(pactl list sink-inputs 2>/dev/null | grep -B 30 "window.x11.display = \":$DISPLAY_NUM\"" | grep "Sink Input" | grep -oP '#\K\d+' | tail -1 || true)
-        if [ -n "$SINK_INPUT" ]; then
-            pactl move-sink-input $SINK_INPUT $SINK_NAME 2>/dev/null && echo "Audio routed to $SINK_NAME (attempt $((i+1)))" && return 0
-        fi
-        sleep 1
-        i=$((i+1))
-    done
-    echo "Warning: Could not find sink-input for display :$DISPLAY_NUM after $retries attempts"
-}
-
-# Immediate routing attempt with retries
-echo "Routing audio..."
-route_audio
-
-# Background audio routing monitor - keeps audio routed correctly
-audio_monitor() {
-    while true; do
-        SINK_INPUT=$(pactl list sink-inputs 2>/dev/null | grep -B 30 "window.x11.display = \":$DISPLAY_NUM\"" | grep "Sink Input" | grep -oP '#\K\d+' | tail -1 || true)
-        if [ -n "$SINK_INPUT" ]; then
-            CURRENT=$(pactl list sink-inputs 2>/dev/null | grep -A 5 "Sink Input #$SINK_INPUT" | grep "Sink:" | awk '{print $2}' || true)
-            EXPECTED=$(pactl list sinks short 2>/dev/null | grep "	$SINK_NAME	" | cut -f1 || true)
-            if [ -n "$EXPECTED" ] && [ "$CURRENT" != "$EXPECTED" ]; then
-                pactl move-sink-input $SINK_INPUT $SINK_NAME 2>/dev/null && echo "Audio rerouted to $SINK_NAME"
-            fi
-        fi
-        sleep 5
-    done
-}
-audio_monitor &
-echo "Started audio monitor"
-
-# Start FFmpeg streaming to Kick (uses RTMPS)
-echo "Starting FFmpeg stream to Kick..."
-PULSE_SERVER=unix:$XDG_RUNTIME_DIR/pulse/native ffmpeg \
+# Start FFmpeg stream
+echo "Starting FFmpeg stream..."
+echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+pactl list sinks short 2>/dev/null || echo "Warning: Cannot list sinks"
+ffmpeg \
     -thread_queue_size 1024 \
     -f x11grab \
     -video_size $RESOLUTION \
